@@ -16,6 +16,7 @@ import gov.usgs.volcanoes.vdx.data.Channel;
 import gov.usgs.volcanoes.vdx.data.ExportData;
 import gov.usgs.volcanoes.vdx.data.MatrixExporter;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -106,12 +107,12 @@ public class RatSamPlotter extends RawDataPlotter {
     boolean exceptionThrown = false;
     String exceptionMsg = "";
     VDXClient client = null;
+    String[] channels = ch.split(",");
 
     // create a map of all the input parameters
     Map<String, String> params = new LinkedHashMap<String, String>();
     params.put("source", vdxSource);
-    params.put("action", "ratdata");
-    params.put("ch", ch);
+    params.put("action", "data");
     params.put("st", Double.toString(startTime));
     params.put("et", Double.toString(endTime));
     params.put("plotType", plotType.toString());
@@ -122,21 +123,37 @@ public class RatSamPlotter extends RawDataPlotter {
     pool = Valve3.getInstance().getDataHandler().getVDXClient(vdxClient);
     if (pool != null) {
       client = pool.checkout();
-      try {
-        data = (RSAMData) client.getBinaryData(params);
-      } catch (UtilException e) {
-        exceptionThrown = true;
-        exceptionMsg = e.getMessage();
-      } catch (Exception e) {
-        exceptionThrown = true;
-        exceptionMsg = e.getMessage();
+
+      // iterate through each of the selected channels and place the data in the map
+      RSAMData[] rData = new RSAMData[2];
+      for (int idx = 0; idx < 2; idx++) {
+        params.put("ch", channels[idx]);
+        try {
+          rData[idx] = (RSAMData) client.getBinaryData(params);
+        } catch (UtilException e) {
+          exceptionThrown = true;
+          exceptionMsg = e.getMessage();
+          break;
+        } catch (Exception e) {
+          exceptionThrown = true;
+          exceptionMsg = e.getMessage();
+          break;
+        }
+
+        // if data was collected
+        if (rData[idx] != null && rData[idx].rows() > 0) {
+          rData[idx].adjustTime(timeOffset);
+
+          // if no data was in the database, spoof the data to get an empty plot
+        } else if (rData[idx] == null) {
+          ArrayList<double[]> list = new ArrayList<double[]>((int) (1));
+          double[] d = new double[]{Double.NaN, Double.NaN};
+          list.add(d);
+          rData[idx] = new RSAMData(list);
+        }
       }
 
-      // if data was collected
-      if (data != null && data.rows() > 0) {
-        data.adjustTime(timeOffset);
-      }
-
+      data = rData[0].getRatSAM(rData[1]);
       // check back in our connection to the database
       pool.checkin(client);
     }
@@ -164,7 +181,7 @@ public class RatSamPlotter extends RawDataPlotter {
 
     String channelCode1 = channel1.getCode().replace('$', ' ').replace('_', ' ').replace(',', '/');
     String channelCode2 = channel2.getCode().replace('$', ' ').replace('_', ' ').replace(',', '/');
-    channel1.setCode(channelCode1 + "-" + channelCode2);
+    channel1.setCode(channelCode1 + "/" + channelCode2);
     GenericDataMatrix gdm = new GenericDataMatrix(rd.getData());
     channelLegendsCols[0] = String.format("%s %s", channel1.getCode(), leftUnit);
 
@@ -219,7 +236,7 @@ public class RatSamPlotter extends RawDataPlotter {
         plotValues(v3p, comp, channel1, channel2, data, currentComp, compBoxHeight);
         if (!forExport) {
           v3p.setCombineable(true);
-          v3p.setTitle(Valve3.getInstance().getMenuHandler().getItem(vdxSource).name + " Values");
+          v3p.setTitle(Valve3.getInstance().getMenuHandler().getItem(vdxSource).name + " RatSAM Values");
         }
         break;
       case COUNTS:
